@@ -239,6 +239,7 @@ class RegistryInspectorPanel extends HTMLElement {
       };
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
+      checkbox.dataset.key = this.key(row);
       checkbox.setAttribute("aria-label", `Select ${row.name}`);
       checkbox.checked = this.selected.has(this.key(row));
       checkbox.disabled = !row.deleted || this.busy || !!this.writeDisabledReason
@@ -247,6 +248,10 @@ class RegistryInspectorPanel extends HTMLElement {
         if (checkbox.checked) this.selected.add(this.key(row));
         else this.selected.delete(this.key(row));
         this.render();
+        // Rendering replaces table rows; keep keyboard users on the same checkbox.
+        const replacement = [...this.shadowRoot.querySelectorAll("tbody input")]
+          .find((input) => input.dataset.key === this.key(row));
+        replacement?.focus({ preventScroll: true });
       };
       cell(checkbox);
       const name = document.createElement("div");

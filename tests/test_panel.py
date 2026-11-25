@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 PANEL = Path(__file__).parents[1] / "custom_components/registry_inspector/panel.js"
 
@@ -104,3 +104,36 @@ async def test_mobile_panel_has_accessible_sidebar_control(page):
     await page.get_by_role("button", name="Toggle sidebar").click()
     assert await page.evaluate("window.menuToggled")
     assert await page.get_by_role("searchbox").is_visible()
+
+
+async def test_checkbox_selection_preserves_keyboard_focus(page):
+    checkbox = page.get_by_role("checkbox", name="Select deleted", exact=True)
+    await checkbox.focus()
+    await checkbox.press("Space")
+    await expect(checkbox).to_be_checked()
+    await expect(checkbox).to_be_focused()
+
+
+async def test_selection_limit_across_pages_and_filters(page):
+    await page.evaluate("""async () => {
+      const panel = document.querySelector('registry-inspector-panel');
+      const template = window.testRows.find(row => row.id === 'deleted');
+      window.testRows = Array.from({length:125}, (_, n) => ({
+        ...template, id:String(n), name:`Plug ${String(n).padStart(3, '0')}`,
+        entity_id:`switch.plug_${n}`, fingerprint:`fp-${n}`
+      }));
+      await panel.refresh();
+    }""")
+    await page.get_by_role("button", name="Select deleted on this page").click()
+    await page.get_by_role("button", name="Next", exact=True).click()
+    await page.get_by_role("button", name="Select deleted on this page").click()
+    await page.get_by_role("button", name="Next", exact=True).click()
+    assert await page.get_by_role("button", name="Select deleted on this page").is_disabled()
+    await expect(page.locator("#selection-count")).to_contain_text("100 selected")
+    await page.get_by_role("searchbox").fill("Plug 124")
+    await expect(page.locator("#selection-count")).to_contain_text("100 selected")
+    await page.get_by_role("button", name="Preview forgetting").click()
+    await page.locator("#confirmation").wait_for(state="visible")
+    calls = await page.evaluate("window.calls")
+    request = next(call for call in calls if call["type"].endswith("/preview"))
+    assert len(request["selections"]) == 100

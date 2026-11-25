@@ -52,6 +52,7 @@ Previews expire after five minutes and can be applied only once by the user who
 created them. Every selected record is checked again immediately before mutation.
 If any selected record has changed or become active again, the entire operation is
 rejected. No active registry entry is ever removed.
+Forgetting is also rejected during Home Assistant startup, shutdown or integration unload.
 
 Deleted entity records may no longer contain their old device links. The panel
 therefore does not guess relationships or select records based on a name or partial

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import attr
 import pytest
+from homeassistant.core import CoreState
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -206,3 +207,56 @@ async def test_schema_change_disables_writes(seed, inspector, monkeypatch):
     monkeypatch.setattr(er, "STORAGE_VERSION_MINOR", 99)
     with pytest.raises(InspectorError, match="schema changed"):
         inspector.preview("admin", selection)
+
+
+async def test_shutdown_during_backup_aborts_before_mutation(hass, seed, inspector, monkeypatch):
+    seed()
+    before = inspector._snapshots()
+    preview = inspector.preview("admin", selections(inspector))
+    executor = hass.async_add_executor_job
+
+    async def write_then_shutdown(func, *args):
+        result = await executor(func, *args)
+        if func is module._write_backup:
+            hass.state = CoreState.stopping
+        return result
+
+    monkeypatch.setattr(hass, "async_add_executor_job", write_then_shutdown)
+    try:
+        with pytest.raises(InspectorError, match="starting or stopping"):
+            await inspector.apply("admin", preview["token"])
+        assert inspector._snapshots() == before
+    finally:
+        hass.state = CoreState.running
+
+
+async def test_schedule_failure_rolls_back_all_removed_records(hass, seed, inspector, monkeypatch):
+    seed()
+    before = inspector._snapshots()
+    preview = inspector.preview("admin", selections(inspector))
+    original = inspector.entities.async_schedule_save
+    calls = 0
+
+    def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("schedule failed")
+        original()
+
+    monkeypatch.setattr(inspector.entities, "async_schedule_save", fail_once)
+    with pytest.raises(RuntimeError, match="schedule failed"):
+        await inspector.apply("admin", preview["token"])
+    assert inspector._snapshots() == before
+
+
+async def test_active_child_devices_appear_in_inventory(hass, seed, inspector, config_entry):
+    parent, _ = seed(deleted=False)
+    child = dr.async_get(hass).async_get_or_create_child(
+        config_entry_id=config_entry.entry_id,
+        parent_device_id=parent.id,
+        identifiers={("mqtt", "child-outlet")},
+        name="Second outlet",
+    )
+    row = next(row for row in inspector.inventory()["rows"] if row["id"] == child.id)
+    assert row["section"] == "child_devices" and not row["deleted"]

@@ -18,7 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from homeassistant.const import __version__ as HA_VERSION
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -53,6 +53,12 @@ def _write_backup(directory: Path, content: bytes) -> str:
         file.write(content)
         file.flush()
         os.fsync(file.fileno())
+    # Persist the new directory entry as well as the file contents on HAOS/Linux.
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
     return name
 
 
@@ -143,6 +149,8 @@ class Inspector:
         """Resolve exact deleted IDs and reject stale or active identities."""
         if not self.enabled:
             raise InspectorError("Registry Inspector was unloaded. Refresh the page.")
+        if self.hass.state is not CoreState.running:
+            raise InspectorError("Home Assistant must be running, not starting or stopping.")
         if reason := self._compatibility():
             raise InspectorError(reason)
         if not 1 <= len(selections) <= MAX_SELECTION:
