@@ -10,7 +10,7 @@ registry entries, not candidates for deletion.
 
 ## Compatibility
 
-Version 0.1 targets **Home Assistant Core 2026.11.3**. Forgetting is enabled on the
+Version 0.2 targets **Home Assistant Core 2026.11.3**. Forgetting is enabled on the
 2026.11 stable series only, with the expected entity and device registry schemas.
 Other versions can inspect records if their serialization is compatible, but writes
 are disabled. This integration uses internal registry interfaces; each new HA minor
@@ -41,22 +41,24 @@ Samba or a file editor app without typing source code into the VM console.
 1. Search the replacement device's **physical IEEE address** or unique ID. An entity
    ID that you renamed can contain the address of a different device.
 2. Review the **Saved deleted** entries. Use **View** to see the exact saved record.
-3. Select the deleted entities and/or deleted device you want forgotten. Selecting
-   a device does not implicitly select entities, or vice versa.
-4. Choose **Preview forgetting**, inspect the records and confirm.
-5. A backup is written before any records are removed. The result shows its path and
-   offers a download. Pair the device again when ready.
+3. Select individual deleted records, or use a device group's checkbox to select
+   its deleted records. Active records remain read-only.
+4. Choose **Forget selected**. A backup is written first and offered for download.
+   Pair the device again when ready.
 
-Selections can span filters and pages, up to 100 records. **Refresh** clears them.
-Previews expire after five minutes and can be applied only once by the user who
-created them. Every selected record is checked again immediately before mutation.
+More entries appear automatically as you scroll. Selections persist across filters
+and loading more entries, with no fixed count limit. **Refresh** clears them.
+Every selected record is checked again immediately before mutation.
 If any selected record has changed or become active again, the entire operation is
 rejected. No active registry entry is ever removed.
 Forgetting is also rejected during Home Assistant startup, shutdown or integration unload.
 
-Deleted entity records may no longer contain their old device links. The panel
-therefore does not guess relationships or select records based on a name or partial
-hardware address. Search, inspect and select the entity and device records explicitly.
+Entities are grouped with their devices using stored links when available. For
+deleted entities, the panel also uses unambiguous complete hardware-address matches
+within an integration. Records without a known device can share a hardware-address
+group; ambiguous or unidentified records appear under Other entities. Grouping never
+changes a saved record or the exact identities submitted for deletion. A group
+checkbox selects its filtered deleted records, including any not yet loaded on screen.
 Area names show an entry's explicitly saved area, not an inferred device area.
 
 ## What forgetting changes

@@ -5,10 +5,12 @@ class RegistryInspectorPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.rows = [];
     this.selected = new Set();
-    this.page = 0;
+    this.visibleLimit = 50;
+    this.collapsedGroups = new Set();
     this.busy = false;
     this.loaded = false;
     this.loadSequence = 0;
+    this.addEventListener("scroll", () => this.scheduleLoad(), { passive: true });
   }
 
   set hass(value) {
@@ -47,10 +49,21 @@ class RegistryInspectorPanel extends HTMLElement {
         input[type=search],select { padding:9px; border:1px solid var(--divider-color,#aaa);
           border-radius:6px; background:var(--card-background-color,white); color:inherit; }
         input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary-color,#0277bd); }
-        .actions,.pager { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
-        .actions span,.pager span { flex:1; }
+        .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0;
+          position:sticky; top:0; z-index:1; padding:10px 0;
+          background:var(--primary-background-color,#fafafa); }
+        .actions span { flex:1; }
+        .group { margin-bottom:14px; border:1px solid var(--divider-color,#ddd);
+          border-radius:8px; background:var(--card-background-color,white); overflow:hidden; }
+        .group > summary { display:flex; gap:12px; align-items:center; padding:12px;
+          cursor:pointer; list-style:none; }
+        .group > summary::before { content:"▸"; width:12px; }
+        .group[open] > summary::before { content:"▾"; }
+        .group-title { flex:1; min-width:0; overflow-wrap:anywhere; font-weight:600; }
+        .group-count { color:var(--secondary-text-color,#666); font-size:12px; }
+        #load-status { padding:12px 0; text-align:center; }
         .table-wrap { overflow-x:auto; background:var(--card-background-color,white);
-          border:1px solid var(--divider-color,#ddd); border-radius:8px; }
+          border-top:1px solid var(--divider-color,#ddd); }
         table { border-collapse:collapse; width:100%; text-align:left; }
         th,td { padding:10px 12px; border-bottom:1px solid var(--divider-color,#ddd); }
         th { white-space:nowrap; color:var(--secondary-text-color,#666); font-size:12px; }
@@ -68,8 +81,6 @@ class RegistryInspectorPanel extends HTMLElement {
         dialog::backdrop { background:#0008; } dialog h2 { margin:0 0 12px; font-size:20px; }
         pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border-radius:6px;
           background:var(--secondary-background-color,#eee); font-size:12px; }
-        .ack { display:flex; flex-direction:row; align-items:start; margin:16px 0; }
-        .ack input { flex-shrink:0; } #backup-path { display:block; overflow-wrap:anywhere; }
         @media(max-width:600px) { main { padding:16px; } header { padding:10px 16px; }
           th,td { padding:8px; } header h1 { font-size:18px; } }
       </style>
@@ -78,12 +89,10 @@ class RegistryInspectorPanel extends HTMLElement {
         <h1>Registry Inspector</h1><button id="refresh">Refresh</button>
       </header>
       <main>
-        <p class="muted">Inspect registered devices and entities, including saved deleted records.
-          Active entries are read-only. Disabled and unavailable entries are still registered.</p>
         <div id="error" class="notice error" role="alert" hidden></div>
         <div id="compatibility" class="notice" hidden></div>
         <div id="success" class="notice" role="status" hidden>
-          <span id="success-text"></span><code id="backup-path"></code>
+          <span id="success-text"></span>
           <button id="download">Download backup</button>
         </div>
         <div id="summary" aria-live="polite"></div>
@@ -96,64 +105,36 @@ class RegistryInspectorPanel extends HTMLElement {
             <option value="deleted">Saved deleted</option><option value="active">Active</option></select></label>
         </div>
         <div class="actions">
-          <button id="select-page">Select deleted on this page</button>
+          <button id="select-loaded">Select loaded deleted records</button>
           <button id="clear">Clear selection</button><span id="selection-count"></span>
-          <button id="preview" class="primary">Preview forgetting</button>
+          <button id="forget" class="danger">Forget selected</button>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Select</th><th>Name / ID</th><th>Type</th><th>Registry</th>
-            <th>Live status</th><th>Integration</th><th>Area</th><th>Details</th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table></div>
+        <div id="groups"></div>
         <p id="empty" class="muted" hidden>No matching entries.</p>
-        <div class="pager"><button id="previous">Previous</button><span id="page"></span>
-          <button id="next">Next</button></div>
-        <p class="muted">Select entity and device records separately. Deleted entities may no longer
-          contain a device link; search the physical IEEE address in their unique IDs.
-          This panel does not delete MQTT messages, history, or statistics.</p>
+        <div id="load-status" class="muted" role="status"></div>
       </main>
       <dialog id="details"><h2>Saved registry record</h2><pre id="record"></pre>
-        <button id="close-details">Close</button></dialog>
-      <dialog id="confirmation"><h2>Forget selected saved settings?</h2>
-        <p>Only the records below will be forgotten. Home Assistant will no longer restore their
-          saved settings when the same identity is registered again. A backup is written first.</p>
-        <p class="muted">Any device record or entity record not selected remains unchanged.
-          History and statistics remain unchanged.</p>
-        <div id="preview-records"></div>
-        <label class="ack"><input id="acknowledge" type="checkbox">
-          I have checked these records and want to forget their saved settings.</label>
-        <div class="actions"><button id="cancel">Cancel</button>
-          <span></span><button id="forget" class="danger" disabled>Forget saved settings</button></div>
-      </dialog>`;
+        <button id="close-details">Close</button></dialog>`;
     this.$("menu").onclick = () => this.dispatchEvent(new Event("hass-toggle-menu", {
       bubbles: true, composed: true,
     }));
     this.$("refresh").onclick = () => this.refresh();
     for (const id of ["search", "kind", "status"]) {
       this.$(id).addEventListener(id === "search" ? "input" : "change", () => {
-        this.page = 0;
+        this.visibleLimit = 50;
+        this.scrollTop = 0;
         this.render();
       });
     }
-    this.$("previous").onclick = () => { this.page--; this.render(); };
-    this.$("next").onclick = () => { this.page++; this.render(); };
-    this.$("clear").onclick = () => { this.selected.clear(); this.render(); };
-    this.$("select-page").onclick = () => {
+    this.$("clear").onclick = () => { this.selected.clear(); this.updateSelection(); };
+    this.$("select-loaded").onclick = () => {
       for (const row of this.visibleRows()) {
-        if (row.deleted && this.selected.size < 100) this.selected.add(this.key(row));
+        if (row.deleted) this.selected.add(this.key(row));
       }
-      this.render();
+      this.updateSelection();
     };
-    this.$("preview").onclick = () => this.previewSelection();
     this.$("close-details").onclick = () => this.$("details").close();
-    this.$("cancel").onclick = () => this.$("confirmation").close();
-    this.$("acknowledge").onchange = () => {
-      this.$("forget").disabled = this.busy || !this.$("acknowledge").checked;
-    };
     this.$("forget").onclick = () => this.forget();
-    this.$("confirmation").addEventListener("cancel", (event) => {
-      if (this.busy) event.preventDefault();
-    });
     this.$("download").onclick = () => {
       const url = URL.createObjectURL(new Blob([this.lastBackup.backup_content], {
         type: "application/json",
@@ -184,7 +165,37 @@ class RegistryInspectorPanel extends HTMLElement {
       && (status === "all" || row.deleted === (status === "deleted"))
       && (!search || JSON.stringify(row).toLowerCase().includes(search)));
   }
-  visibleRows() { return this.filteredRows().slice(this.page * 50, (this.page + 1) * 50); }
+  filteredGroups() {
+    if (this.groupCache) return this.groupCache;
+    const groups = new Map();
+    for (const row of this.filteredRows()) {
+      const id = row.group_id || (row.kind === "device" ? this.key(row) : "other");
+      if (!groups.has(id)) groups.set(id, {
+        id, name: row.group_name || (row.kind === "device" ? row.name : "Other entities"), rows: [],
+      });
+      groups.get(id).rows.push(row);
+    }
+    this.groupCache = [...groups.values()].sort((a, b) => (a.id === "other") - (b.id === "other")
+      || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    return this.groupCache;
+  }
+
+  visibleRows() {
+    return this.filteredGroups().flatMap((group) => group.rows).slice(0, this.visibleLimit);
+  }
+
+  scheduleLoad() {
+    if (this.loadScheduled) return;
+    this.loadScheduled = requestAnimationFrame(() => {
+      this.loadScheduled = null;
+      if (!this.isConnected || this.busy || !this.clientHeight) return;
+      const total = this.filteredGroups().reduce((count, group) => count + group.rows.length, 0);
+      if (this.visibleLimit >= total) return;
+      if (this.scrollTop + this.clientHeight < this.scrollHeight - 160) return;
+      this.visibleLimit += 50;
+      this.renderGroups(true);
+    });
+  }
 
   async refresh() {
     const sequence = ++this.loadSequence;
@@ -198,6 +209,8 @@ class RegistryInspectorPanel extends HTMLElement {
       this.rows = result.rows;
       this.rows.sort((a, b) => a.name.localeCompare(b.name) || this.key(a).localeCompare(this.key(b)));
       this.writeDisabledReason = result.write_disabled_reason;
+      this.visibleLimit = 50;
+      this.scrollTop = 0;
       // A refresh requires an explicit new selection rather than silently updating it.
       this.selected.clear();
     } catch (error) {
@@ -212,7 +225,8 @@ class RegistryInspectorPanel extends HTMLElement {
   }
 
   render() {
-    if (!this.$("rows")) return;
+    if (!this.$("groups")) return;
+    this.groupCache = null;
     const deletedCount = this.rows.filter((row) => row.deleted).length;
     this.$("summary").replaceChildren(...[
       `${this.rows.length} total`, `${this.rows.length - deletedCount} active`,
@@ -223,126 +237,165 @@ class RegistryInspectorPanel extends HTMLElement {
       chip.textContent = text;
       return chip;
     }));
-    const filtered = this.filteredRows();
-    const pages = Math.max(1, Math.ceil(filtered.length / 50));
-    this.page = Math.max(0, Math.min(this.page, pages - 1));
-    const visible = this.visibleRows();
-    this.$("rows").replaceChildren(...visible.map((row) => {
-      const tr = document.createElement("tr");
-      const cell = (value, className) => {
-        const td = document.createElement("td");
-        if (value instanceof Node) td.append(value);
-        else td.textContent = value || "—";
-        if (className) td.className = className;
-        tr.append(td);
-        return td;
-      };
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.dataset.key = this.key(row);
-      checkbox.setAttribute("aria-label", `Select ${row.name}`);
-      checkbox.checked = this.selected.has(this.key(row));
-      checkbox.disabled = !row.deleted || this.busy || !!this.writeDisabledReason
-        || (!checkbox.checked && this.selected.size >= 100);
-      checkbox.onchange = () => {
-        if (checkbox.checked) this.selected.add(this.key(row));
-        else this.selected.delete(this.key(row));
-        this.render();
-        // Rendering replaces table rows; keep keyboard users on the same checkbox.
-        const replacement = [...this.shadowRoot.querySelectorAll("tbody input")]
-          .find((input) => input.dataset.key === this.key(row));
-        replacement?.focus({ preventScroll: true });
-      };
-      cell(checkbox);
-      const name = document.createElement("div");
-      name.textContent = row.name;
-      const id = document.createElement("small");
-      id.className = "muted";
-      id.textContent = row.entity_id || row.id;
-      name.append(id);
-      cell(name, "identity");
-      cell(row.kind === "entity" ? "Entity" : "Device");
-      const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = row.deleted ? "Saved deleted" : "Active";
-      cell(badge);
-      cell(row.deleted ? "Not registered" : row.disabled ? "Disabled"
-        : row.state || (row.kind === "device" ? "See entities" : "No current state"));
-      cell(row.integration);
-      cell(row.area);
-      const details = document.createElement("button");
-      details.textContent = "View";
-      details.setAttribute("aria-label", `View ${row.name}`);
-      details.onclick = () => {
-        this.$("record").textContent = JSON.stringify({ section: row.section, ...row.record }, null, 2);
-        this.$("details").showModal();
-      };
-      cell(details);
-      return tr;
-    }));
-    this.$("empty").hidden = !!filtered.length || this.busy;
-    this.$("page").textContent = this.busy ? "Loading…"
-      : `${filtered.length} matches · Page ${this.page + 1} of ${pages}`;
-    this.$("previous").disabled = this.busy || this.page === 0;
-    this.$("next").disabled = this.busy || this.page >= pages - 1;
-    this.$("refresh").disabled = this.busy;
-    this.$("clear").disabled = this.busy || !this.selected.size;
-    this.$("select-page").disabled = this.busy || !!this.writeDisabledReason
-      || !visible.some((row) => row.deleted) || this.selected.size >= 100;
-    this.$("preview").disabled = this.busy || !!this.writeDisabledReason || !this.selected.size;
-    this.$("selection-count").textContent = `${this.selected.size} selected across all filters (max 100)`;
+    this.renderGroups();
     this.$("compatibility").hidden = !this.writeDisabledReason;
     this.$("compatibility").textContent = this.writeDisabledReason || "";
   }
 
-  async previewSelection() {
+  renderGroups(append = false) {
+    if (!append) this.$("groups").replaceChildren();
+    const existing = new Map([...this.$("groups").children].map((node) => [node.dataset.group, node]));
+    const groups = this.filteredGroups();
+    let remaining = this.visibleLimit;
+    for (const group of groups) {
+      if (remaining <= 0) break;
+      const records = group.rows.slice(0, remaining);
+      remaining -= records.length;
+      let node = existing.get(group.id);
+      if (!node) {
+        node = document.createElement("details");
+        node.className = "group";
+        node.dataset.group = group.id;
+        node.open = !this.collapsedGroups.has(group.id);
+        const summary = document.createElement("summary");
+        const select = document.createElement("input");
+        select.type = "checkbox";
+        select.className = "group-select";
+        select.members = group.rows.filter((row) => row.deleted).map((row) => this.key(row));
+        select.setAttribute("aria-label", `Select deleted in ${group.name}`);
+        select.onclick = (event) => event.stopPropagation();
+        select.onchange = () => {
+          for (const key of select.members) {
+            if (select.checked) this.selected.add(key);
+            else this.selected.delete(key);
+          }
+          this.updateSelection();
+        };
+        const name = document.createElement("span");
+        name.className = "group-title";
+        name.textContent = group.name;
+        const count = document.createElement("span");
+        count.className = "group-count";
+        count.textContent = `${group.rows.length} records · ${select.members.length} deleted`;
+        summary.append(select, name, count);
+        const table = document.createElement("div");
+        table.className = "table-wrap";
+        table.innerHTML = `<table><thead><tr><th>Select</th><th>Name / ID</th><th>Type</th>
+          <th>Registry</th><th>Live status</th><th>Integration</th><th>Area</th><th>Details</th>
+          </tr></thead><tbody></tbody></table>`;
+        node.append(summary, table);
+        node.addEventListener("toggle", () => {
+          if (node.open) this.collapsedGroups.delete(group.id);
+          else this.collapsedGroups.add(group.id);
+          this.scheduleLoad();
+        });
+        this.$("groups").append(node);
+      }
+      const body = node.querySelector("tbody");
+      body.append(...records.slice(body.children.length).map((row) => this.renderRow(row)));
+    }
+    const total = groups.reduce((count, group) => count + group.rows.length, 0);
+    this.$("empty").hidden = !!total || this.busy;
+    this.$("load-status").textContent = this.busy ? "Loading…"
+      : `${Math.min(this.visibleLimit, total)} of ${total} records`;
+    this.updateSelection();
+    this.scheduleLoad();
+  }
+
+  renderRow(row) {
+    const tr = document.createElement("tr");
+    const cell = (value, className) => {
+      const td = document.createElement("td");
+      if (value instanceof Node) td.append(value);
+      else td.textContent = value || "—";
+      if (className) td.className = className;
+      tr.append(td);
+      return td;
+    };
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "record-select";
+    checkbox.dataset.key = this.key(row);
+    checkbox.setAttribute("aria-label", `Select ${row.name}`);
+    checkbox.checked = this.selected.has(this.key(row));
+    checkbox.disabled = !row.deleted || this.busy || !!this.writeDisabledReason;
+    checkbox.deleted = row.deleted;
+    checkbox.onchange = () => {
+      if (checkbox.checked) this.selected.add(this.key(row));
+      else this.selected.delete(this.key(row));
+      this.updateSelection();
+    };
+    cell(checkbox);
+    const name = document.createElement("div");
+    name.textContent = row.name;
+    const subtitle = row.entity_id || row.id;
+    if (subtitle !== row.name) {
+      const id = document.createElement("small");
+      id.className = "muted";
+      id.textContent = subtitle;
+      name.append(id);
+    }
+    cell(name, "identity");
+    cell(row.kind === "entity" ? "Entity" : "Device");
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = row.deleted ? "Saved deleted" : "Active";
+    cell(badge);
+    cell(row.deleted ? "Not registered" : row.disabled ? "Disabled"
+      : row.state || (row.kind === "device" ? "See entities" : "No current state"));
+    cell(row.integration);
+    cell(row.area);
+    const details = document.createElement("button");
+    details.textContent = "View";
+    details.setAttribute("aria-label", `View ${row.name}`);
+    details.onclick = () => {
+      this.$("record").textContent = JSON.stringify({ section: row.section, ...row.record }, null, 2);
+      this.$("details").showModal();
+    };
+    cell(details);
+    return tr;
+  }
+
+  updateSelection() {
+    for (const input of this.shadowRoot.querySelectorAll(".record-select")) {
+      input.checked = this.selected.has(input.dataset.key);
+      input.disabled = !input.deleted || this.busy || !!this.writeDisabledReason;
+    }
+    for (const input of this.shadowRoot.querySelectorAll(".group-select")) {
+      const selected = input.members.filter((key) => this.selected.has(key)).length;
+      input.checked = input.members.length > 0 && selected === input.members.length;
+      input.indeterminate = selected > 0 && selected < input.members.length;
+      input.disabled = this.busy || !!this.writeDisabledReason || !input.members.length;
+    }
+    this.$("refresh").disabled = this.busy;
+    this.$("clear").disabled = this.busy || !this.selected.size;
+    this.$("select-loaded").disabled = this.busy || !!this.writeDisabledReason
+      || !this.visibleRows().some((row) => row.deleted);
+    this.$("forget").disabled = this.busy || !!this.writeDisabledReason || !this.selected.size;
+    this.$("forget").textContent = this.busy ? "Working…" : "Forget selected";
+    this.$("selection-count").textContent = `${this.selected.size} selected`;
+  }
+
+  async forget() {
+    if (this.busy || this.writeDisabledReason || !this.selected.size) return;
     this.busy = true;
+    this.$("forget").disabled = true;
+    this.$("success").hidden = true;
     this.error("");
     this.render();
     try {
       const selections = this.rows.filter((row) => this.selected.has(this.key(row)))
         .map(({ kind, id, fingerprint }) => ({ kind, id, fingerprint }));
-      this.preview = await this.call("preview", { selections });
-      this.$("preview-records").replaceChildren(...this.preview.records.map((item) => {
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
-        const record = item.record;
-        summary.textContent = `${item.section}: ${record.entity_id || record.name_by_user || record.id}`;
-        const pre = document.createElement("pre");
-        pre.textContent = JSON.stringify(record, null, 2);
-        details.append(summary, pre);
-        return details;
-      }));
-      this.$("acknowledge").checked = false;
-      this.$("forget").disabled = true;
-      this.$("confirmation").showModal();
-    } catch (error) { this.error(error.message || String(error)); }
-    finally { this.busy = false; this.render(); }
-  }
-
-  async forget() {
-    if (this.busy || !this.preview || !this.$("acknowledge").checked) return;
-    this.busy = true;
-    this.$("forget").disabled = true;
-    this.$("cancel").disabled = true;
-    this.error("");
-    this.render();
-    try {
-      const result = await this.call("forget", { token: this.preview.token });
+      const result = await this.call("forget", { selections });
       this.lastBackup = result;
-      this.$("success-text").textContent = `Forgot ${result.forgotten} saved deleted records.
-        Home Assistant has scheduled its registry save. Backup: `;
-      this.$("backup-path").textContent = result.backup_path;
+      this.$("success-text").textContent = `Forgot ${result.forgotten} records. `;
+      this.$("download").title = result.backup_path;
       this.$("success").hidden = false;
-      this.$("confirmation").close();
       await this.refresh();
     } catch (error) {
-      this.$("confirmation").close();
       this.error(error.message || String(error));
     } finally {
-      this.preview = null;
       this.busy = false;
-      this.$("cancel").disabled = false;
       this.render();
     }
   }

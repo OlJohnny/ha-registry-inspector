@@ -10,7 +10,7 @@ from custom_components.registry_inspector import websocket as ws
 from custom_components.registry_inspector.config_flow import ConfigFlow
 
 
-@pytest.mark.parametrize("handler", [ws.websocket_list, ws.websocket_preview, ws.websocket_forget])
+@pytest.mark.parametrize("handler", [ws.websocket_list, ws.websocket_forget])
 @pytest.mark.parametrize("user", [None, SimpleNamespace(id="guest", is_admin=False)])
 def test_all_endpoints_require_admin(hass, inspector, handler, user):
     connection = SimpleNamespace(user=user, send_result=Mock(), send_error=Mock())

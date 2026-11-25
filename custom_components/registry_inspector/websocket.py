@@ -6,7 +6,7 @@ import probatio as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN, MAX_SELECTION
+from .const import DOMAIN
 from .registry import Inspector, InspectorError
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def websocket_list(hass, connection, msg):
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{DOMAIN}/preview",
+        vol.Required("type"): f"{DOMAIN}/forget",
         vol.Required("selections"): vol.All(
             [
                 {
@@ -43,30 +43,16 @@ def websocket_list(hass, connection, msg):
                     vol.Required("fingerprint"): str,
                 }
             ],
-            vol.Length(min=1, max=MAX_SELECTION),
+            vol.Length(min=1),
         ),
     }
 )
 @websocket_api.require_admin
-@callback
-def websocket_preview(hass, connection, msg):
-    """Resolve a selection and issue a user-bound preview."""
-    try:
-        result = _inspector(hass).preview(connection.user.id, msg["selections"])
-        connection.send_result(msg["id"], result)
-    except InspectorError as err:
-        connection.send_error(msg["id"], "inspector_error", str(err))
-
-
-@websocket_api.websocket_command(
-    {vol.Required("type"): f"{DOMAIN}/forget", vol.Required("token"): str}
-)
-@websocket_api.require_admin
 @websocket_api.async_response
 async def websocket_forget(hass, connection, msg):
-    """Require a preview instead of accepting arbitrary IDs to delete."""
+    """Forget selected deleted records after backup and current-state validation."""
     try:
-        result = await _inspector(hass).apply(connection.user.id, msg["token"])
+        result = await _inspector(hass).apply(connection.user.id, msg["selections"])
         connection.send_result(msg["id"], result)
     except InspectorError as err:
         connection.send_error(msg["id"], "inspector_error", str(err))
@@ -79,6 +65,6 @@ async def websocket_forget(hass, connection, msg):
 
 @callback
 def async_register_commands(hass: HomeAssistant) -> None:
-    """Register every endpoint, including list and preview, with admin checks."""
-    for handler in (websocket_list, websocket_preview, websocket_forget):
+    """Register both endpoints with admin checks."""
+    for handler in (websocket_list, websocket_forget):
         websocket_api.async_register_command(hass, handler)

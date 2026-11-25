@@ -2,7 +2,6 @@
 
 import json
 import os
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -55,8 +54,8 @@ async def test_forget_is_selective_and_backup_is_restorable(hass, seed, inspecto
     device, _ = seed()
     seed("0x9999", deleted=False)
     before = inspector._snapshots()
-    preview = inspector.preview("admin", selections(inspector, kind))
-    result = await inspector.apply("admin", preview["token"])
+    selected = selections(inspector, kind)
+    result = await inspector.apply("admin", selected)
     assert result["forgotten"] == (2 if kind is None else 1)
     backup = json.loads(Path(result["backup_path"]).read_bytes())
     assert backup["registries"]["entity"]["data"] == before["entity"]
@@ -89,8 +88,8 @@ async def test_forget_is_selective_and_backup_is_restorable(hass, seed, inspecto
 
 async def test_forgotten_settings_do_not_return_on_repair(hass, seed, inspector, config_entry):
     old_device, old_entity = seed()
-    preview = inspector.preview("admin", selections(inspector))
-    await inspector.apply("admin", preview["token"])
+    selected = selections(inspector)
+    await inspector.apply("admin", selected)
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=config_entry.entry_id,
         identifiers=old_device.identifiers,
@@ -114,35 +113,29 @@ async def test_active_id_cannot_be_forgotten(hass, seed, inspector):
     seed(deleted=False)
     row = inspector.inventory()["rows"][0]
     with pytest.raises(InspectorError, match="changed or disappeared"):
-        inspector.preview("admin", [{key: row[key] for key in ("kind", "id", "fingerprint")}])
+        await inspector.apply("admin", [{key: row[key] for key in ("kind", "id", "fingerprint")}])
 
 
-async def test_user_binding_expiry_and_replay(seed, inspector):
-    seed()
-    preview = inspector.preview("alice", selections(inspector))
-    with pytest.raises(InspectorError, match="another user"):
-        await inspector.apply("bob", preview["token"])
-    # A different user cannot invalidate the original administrator's preview.
-    result = await inspector.apply("alice", preview["token"])
-    assert result["forgotten"] == 2
-    with pytest.raises(InspectorError, match="missing"):
-        await inspector.apply("alice", preview["token"])
-    seed("0x5678")
-    preview = inspector.preview("alice", selections(inspector))
-    inspector.previews[preview["token"]]["expires"] = time.monotonic() - 1
-    with pytest.raises(InspectorError, match="expired"):
-        await inspector.apply("alice", preview["token"])
+async def test_more_than_100_records_and_repeated_request(seed, inspector):
+    for index in range(65):
+        seed(f"0x{index:016x}")
+    selected = selections(inspector)
+    assert len(selected) == 130
+    result = await inspector.apply("admin", selected)
+    assert result["forgotten"] == 130
+    with pytest.raises(InspectorError, match="changed or disappeared"):
+        await inspector.apply("admin", selected)
 
 
 async def test_changed_record_rejects_entire_selection(hass, seed, inspector):
     seed()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     registry = er.async_get(hass)
     key, entry = next(iter(registry.deleted_entities.items()))
     registry.deleted_entities[key] = attr.evolve(entry, icon="mdi:lightbulb")
     before = inspector._snapshots()
     with pytest.raises(InspectorError, match="changed or disappeared"):
-        await inspector.apply("admin", preview["token"])
+        await inspector.apply("admin", selected)
     assert inspector._snapshots() == before
 
 
@@ -150,7 +143,7 @@ async def test_repair_during_backup_does_not_remove_restored_device(
     hass, seed, inspector, config_entry, monkeypatch
 ):
     device, _ = seed()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     executor = hass.async_add_executor_job
 
     async def write_then_repair(func, *args):
@@ -165,7 +158,7 @@ async def test_repair_during_backup_does_not_remove_restored_device(
 
     monkeypatch.setattr(hass, "async_add_executor_job", write_then_repair)
     with pytest.raises(InspectorError, match="changed or disappeared"):
-        await inspector.apply("admin", preview["token"])
+        await inspector.apply("admin", selected)
     assert dr.async_get(hass).async_get(device.id) is not None
     assert len(er.async_get(hass).deleted_entities) == 1
 
@@ -173,32 +166,32 @@ async def test_repair_during_backup_does_not_remove_restored_device(
 async def test_backup_failure_never_mutates_registry(seed, inspector):
     seed()
     before = inspector._snapshots()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     with patch.object(module, "_write_backup", side_effect=OSError("disk full")):
         with pytest.raises(OSError, match="disk full"):
-            await inspector.apply("admin", preview["token"])
+            await inspector.apply("admin", selected)
     assert inspector._snapshots() == before
 
 
-async def test_unloaded_integration_rejects_pending_preview(seed, inspector):
+async def test_unloaded_integration_rejects_pending_operation(seed, inspector):
     seed()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     inspector.enabled = False
     with pytest.raises(InspectorError, match="unloaded"):
-        await inspector.apply("admin", preview["token"])
+        await inspector.apply("admin", selected)
 
 
 async def test_duplicate_empty_and_unsupported_selections(seed, inspector, monkeypatch):
     seed()
     selection = selections(inspector)
-    with pytest.raises(InspectorError, match="between"):
-        inspector.preview("admin", [])
+    with pytest.raises(InspectorError, match="at least one"):
+        await inspector.apply("admin", [])
     with pytest.raises(InspectorError, match="duplicate"):
-        inspector.preview("admin", [selection[0], selection[0]])
+        await inspector.apply("admin", [selection[0], selection[0]])
     monkeypatch.setattr(module, "HA_VERSION", "2026.12.0")
     assert inspector.inventory()["write_disabled_reason"]
     with pytest.raises(InspectorError, match="2026.11"):
-        inspector.preview("admin", selection)
+        await inspector.apply("admin", selection)
 
 
 async def test_schema_change_disables_writes(seed, inspector, monkeypatch):
@@ -206,13 +199,13 @@ async def test_schema_change_disables_writes(seed, inspector, monkeypatch):
     selection = selections(inspector)
     monkeypatch.setattr(er, "STORAGE_VERSION_MINOR", 99)
     with pytest.raises(InspectorError, match="schema changed"):
-        inspector.preview("admin", selection)
+        await inspector.apply("admin", selection)
 
 
 async def test_shutdown_during_backup_aborts_before_mutation(hass, seed, inspector, monkeypatch):
     seed()
     before = inspector._snapshots()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     executor = hass.async_add_executor_job
 
     async def write_then_shutdown(func, *args):
@@ -224,7 +217,7 @@ async def test_shutdown_during_backup_aborts_before_mutation(hass, seed, inspect
     monkeypatch.setattr(hass, "async_add_executor_job", write_then_shutdown)
     try:
         with pytest.raises(InspectorError, match="starting or stopping"):
-            await inspector.apply("admin", preview["token"])
+            await inspector.apply("admin", selected)
         assert inspector._snapshots() == before
     finally:
         hass.state = CoreState.running
@@ -233,7 +226,7 @@ async def test_shutdown_during_backup_aborts_before_mutation(hass, seed, inspect
 async def test_schedule_failure_rolls_back_all_removed_records(hass, seed, inspector, monkeypatch):
     seed()
     before = inspector._snapshots()
-    preview = inspector.preview("admin", selections(inspector))
+    selected = selections(inspector)
     original = inspector.entities.async_schedule_save
     calls = 0
 
@@ -246,7 +239,7 @@ async def test_schedule_failure_rolls_back_all_removed_records(hass, seed, inspe
 
     monkeypatch.setattr(inspector.entities, "async_schedule_save", fail_once)
     with pytest.raises(RuntimeError, match="schedule failed"):
-        await inspector.apply("admin", preview["token"])
+        await inspector.apply("admin", selected)
     assert inspector._snapshots() == before
 
 
@@ -260,3 +253,11 @@ async def test_active_child_devices_appear_in_inventory(hass, seed, inspector, c
     )
     row = next(row for row in inspector.inventory()["rows"] if row["id"] == child.id)
     assert row["section"] == "child_devices" and not row["deleted"]
+
+
+async def test_real_deleted_records_are_grouped_without_modifying_storage(seed, inspector):
+    device, _ = seed("0xf082c0fffee75697")
+    before = inspector._snapshots()
+    rows = inspector.inventory()["rows"]
+    assert {row["group_id"] for row in rows} == {f"device:{device.id}"}
+    assert inspector._snapshots() == before

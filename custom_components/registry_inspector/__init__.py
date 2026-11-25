@@ -30,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         webcomponent_name="registry-inspector-panel",
         sidebar_title=TITLE,
         sidebar_icon="mdi:database-search",
-        module_url=f"{STATIC_URL}?v=0.1.0",
+        module_url=f"{STATIC_URL}?v=0.2.0",
         require_admin=True,
         config_panel_domain=DOMAIN,
     )
@@ -39,7 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Remove the panel and invalidate pending previews."""
+    """Remove the panel and prevent pending operations from mutating registries."""
     inspector = hass.data.pop(DOMAIN)
     inspector.enabled = False
     frontend.async_remove_panel(hass, PANEL_PATH)

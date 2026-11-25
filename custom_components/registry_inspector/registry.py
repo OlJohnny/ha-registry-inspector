@@ -10,8 +10,6 @@ import json
 import logging
 import os
 import re
-import time
-from collections import OrderedDict
 from collections.abc import MutableMapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +22,8 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.json import json_bytes
 
-from .const import DOMAIN, MAX_SELECTION, PREVIEW_SECONDS
+from .const import DOMAIN
+from .grouping import assign_groups
 
 _LOGGER = logging.getLogger(__name__)
 DELETED = {"deleted_entities", "deleted_devices"}
@@ -39,7 +38,7 @@ class InspectorError(Exception):
 
 
 def fingerprint(record: dict) -> str:
-    """Identify the exact saved record, including settings shown in the preview."""
+    """Identify the exact saved record shown in the inventory."""
     return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
 
 
@@ -63,14 +62,13 @@ def _write_backup(directory: Path, content: bytes) -> str:
 
 
 class Inspector:
-    """Provide a read-only inventory and short-lived, user-bound forget previews."""
+    """Provide an inventory and selectively forget deleted records."""
 
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
         self.enabled = True
         self.entities = er.async_get(hass)
         self.devices = dr.async_get(hass)
-        self.previews: OrderedDict[str, dict] = OrderedDict()
         self.lock = asyncio.Lock()
 
     def _snapshots(self) -> dict:
@@ -139,6 +137,7 @@ class Inspector:
                             "record": record,
                         }
                     )
+        assign_groups(rows)
         return {
             "rows": rows,
             "ha_version": HA_VERSION,
@@ -153,8 +152,39 @@ class Inspector:
             raise InspectorError("Home Assistant must be running, not starting or stopping.")
         if reason := self._compatibility():
             raise InspectorError(reason)
-        if not 1 <= len(selections) <= MAX_SELECTION:
-            raise InspectorError(f"Select between 1 and {MAX_SELECTION} deleted records.")
+        if not selections:
+            raise InspectorError("Select at least one deleted record.")
+        deleted_by_id = {}
+        active_ids = {}
+        active_entities = set()
+        active_devices = set()
+        for kind, sections in SECTIONS.items():
+            deleted_by_id[kind] = {}
+            active_ids[kind] = set()
+            for section in sections:
+                for record in snapshots[kind].get(section, []):
+                    if section in DELETED:
+                        if record["id"] in deleted_by_id[kind]:
+                            raise InspectorError(
+                                "Duplicate registry IDs found. Forgetting is disabled."
+                            )
+                        deleted_by_id[kind][record["id"]] = record
+                        continue
+                    active_ids[kind].add(record["id"])
+                    if kind == "entity":
+                        active_entities.add(
+                            (
+                                record["entity_id"].split(".")[0],
+                                record["platform"],
+                                record["unique_id"],
+                            )
+                        )
+                    else:
+                        active_devices.update(
+                            (field, tuple(pair))
+                            for field in ("identifiers", "connections")
+                            for pair in record.get(field, [])
+                        )
         resolved = []
         seen = set()
         for selection in selections:
@@ -164,65 +194,32 @@ class Inspector:
                 raise InspectorError("The selection contains duplicate records.")
             seen.add(identity)
             section = "deleted_entities" if kind == "entity" else "deleted_devices"
-            matches = [row for row in snapshots[kind][section] if row["id"] == selection["id"]]
-            if len(matches) != 1 or fingerprint(matches[0]) != selection["fingerprint"]:
-                raise InspectorError(
-                    "A selected record changed or disappeared. Refresh and preview."
+            record = deleted_by_id[kind].get(selection["id"])
+            if record is None or fingerprint(record) != selection["fingerprint"]:
+                raise InspectorError("A selected record changed or disappeared. Refresh the list.")
+            same_identity = record["id"] in active_ids[kind]
+            if kind == "entity":
+                same_identity |= (
+                    record["entity_id"].split(".")[0],
+                    record["platform"],
+                    record["unique_id"],
+                ) in active_entities
+            else:
+                same_identity |= any(
+                    (field, tuple(pair)) in active_devices
+                    for field in ("identifiers", "connections")
+                    for pair in record.get(field, [])
                 )
-            record = matches[0]
-            active = [
-                row
-                for location in SECTIONS[kind]
-                if location not in DELETED
-                for row in snapshots[kind].get(location, [])
-            ]
-            for row in active:
-                same_identity = row["id"] == record["id"]
-                if kind == "entity":
-                    same_identity |= (
-                        row.get("platform") == record.get("platform")
-                        and row.get("unique_id") == record.get("unique_id")
-                        and row["entity_id"].split(".")[0] == record["entity_id"].split(".")[0]
-                    )
-                else:
-                    for field in ("identifiers", "connections"):
-                        same_identity |= bool(
-                            {tuple(pair) for pair in row.get(field, [])}
-                            & {tuple(pair) for pair in record.get(field, [])}
-                        )
-                if same_identity:
-                    raise InspectorError("A selected identity is active again. Refresh the list.")
+            if same_identity:
+                raise InspectorError("A selected identity is active again. Refresh the list.")
             resolved.append({"kind": kind, "section": section, "record": record})
         return resolved
 
-    def preview(self, user_id: str, selections: list[dict]) -> dict:
-        """Bind a reviewed selection to an administrator and expire it in five minutes."""
-        records = self._resolve(selections, self._snapshots())
-        now = time.monotonic()
-        for token, preview in list(self.previews.items()):
-            if preview["expires"] <= now:
-                del self.previews[token]
-        while len(self.previews) >= 32:
-            self.previews.popitem(last=False)
-        token = uuid4().hex
-        self.previews[token] = {
-            "user_id": user_id,
-            "expires": now + PREVIEW_SECONDS,
-            "selections": selections,
-        }
-        return {"token": token, "records": records, "expires_in": PREVIEW_SECONDS}
-
-    async def apply(self, user_id: str, token: str) -> dict:
-        """Back up, revalidate and forget only the explicitly reviewed tombstones."""
+    async def apply(self, user_id: str, selections: list[dict]) -> dict:
+        """Back up, revalidate and forget only the explicitly selected tombstones."""
         async with self.lock:
-            preview = self.previews.get(token)
-            if not preview or preview["user_id"] != user_id:
-                raise InspectorError("This preview is missing or belongs to another user.")
-            del self.previews[token]
-            if preview["expires"] <= time.monotonic():
-                raise InspectorError("The preview expired. Preview the selection again.")
             snapshots = self._snapshots()
-            records = self._resolve(preview["selections"], snapshots)
+            records = self._resolve(selections, snapshots)
             backup = {
                 "format_version": 1,
                 "ha_version": HA_VERSION,
@@ -242,7 +239,7 @@ class Inspector:
             directory = Path(self.hass.config.path(".storage", f"{DOMAIN}_backups"))
             filename = await self.hass.async_add_executor_job(_write_backup, directory, content)
             # Pairing or settings may have changed while the backup was being written.
-            records = self._resolve(preview["selections"], self._snapshots())
+            records = self._resolve(selections, self._snapshots())
             removed = []
             registries = set()
             try:
