@@ -21,6 +21,20 @@ def hardware_ids(values) -> set[str]:
     }
 
 
+def device_pairs(record: dict, field: str) -> list[tuple[str, str]]:
+    """Read usable identifier/connection pairs without altering malformed saved data."""
+    values = record.get(field)
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [
+        (pair[0], pair[1])
+        for pair in values
+        if isinstance(pair, (list, tuple))
+        and len(pair) == 2
+        and all(isinstance(value, str) and value for value in pair)
+    ]
+
+
 def _same_scope(entity: dict, device: dict) -> bool:
     """Keep hardware matches within their owning integration when it is known."""
     entity_config = entity["record"].get("config_entry_id")
@@ -28,7 +42,7 @@ def _same_scope(entity: dict, device: dict) -> bool:
     if entity_config and device_config:
         return entity_config == device_config
     platform = entity["record"].get("platform") or entity.get("integration")
-    namespaces = {pair[0] for pair in device["record"].get("identifiers", [])}
+    namespaces = {pair[0] for pair in device_pairs(device["record"], "identifiers")}
     return bool(platform and (platform == device.get("integration") or platform in namespaces))
 
 
@@ -42,7 +56,7 @@ def assign_groups(rows: list[dict]) -> None:
         values = [
             pair[1]
             for field in ("identifiers", "connections")
-            for pair in row["record"].get(field, [])
+            for pair in device_pairs(row["record"], field)
         ]
         for address in hardware_ids(values):
             by_hardware[address].add(device_id)

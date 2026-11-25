@@ -30,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         webcomponent_name="registry-inspector-panel",
         sidebar_title=TITLE,
         sidebar_icon="mdi:database-search",
-        module_url=f"{STATIC_URL}?v=0.2.0",
+        module_url=f"{STATIC_URL}?v=0.2.1",
         require_admin=True,
         config_panel_domain=DOMAIN,
     )

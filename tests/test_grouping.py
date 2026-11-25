@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from custom_components.registry_inspector.grouping import assign_groups, hardware_ids
+from custom_components.registry_inspector.grouping import assign_groups, device_pairs, hardware_ids
 
 
 def device(device_id="device", config="mqtt-1", address="0xf082c0fffee75697"):
@@ -75,3 +75,19 @@ def test_unlinked_entities_share_address_but_not_integration():
 )
 def test_complete_addresses_only(value, expected):
     assert hardware_ids([value]) == expected
+
+
+@pytest.mark.parametrize("field", ["identifiers", "connections"])
+@pytest.mark.parametrize("malformed", [[], ["mqtt"], None, "mqtt", ["mqtt", None]])
+def test_incomplete_pairs_do_not_break_grouping(field, malformed):
+    rows = [device(), entity(config=None)]
+    rows[0]["record"][field] = [malformed, ["mqtt", "0xf082c0fffee75697"]]
+    original = deepcopy(rows[0]["record"])
+    assign_groups(rows)
+    assert rows[-1]["group_id"] == "device:device"
+    assert rows[0]["record"] == original
+
+
+@pytest.mark.parametrize("values", [None, "mqtt", {}, []])
+def test_missing_pair_collections_are_ignored(values):
+    assert device_pairs({"identifiers": values}, "identifiers") == []

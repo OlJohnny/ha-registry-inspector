@@ -261,3 +261,27 @@ async def test_real_deleted_records_are_grouped_without_modifying_storage(seed, 
     rows = inspector.inventory()["rows"]
     assert {row["group_id"] for row in rows} == {f"device:{device.id}"}
     assert inspector._snapshots() == before
+
+
+async def test_incomplete_pairs_in_snapshot_do_not_hide_inventory_or_block_forgetting(
+    seed, inspector, monkeypatch
+):
+    seed("0xf082c0fffee75697")
+    seed("0x00124b0000001234", deleted=False)
+    original_snapshot = inspector._snapshots
+
+    def snapshot_with_incomplete_pairs():
+        snapshots = original_snapshot()
+        for section in ("devices", "deleted_devices"):
+            for record in snapshots["device"][section]:
+                record["identifiers"].extend([[], ["mqtt"]])
+                record["connections"].append([])
+        return snapshots
+
+    monkeypatch.setattr(inspector, "_snapshots", snapshot_with_incomplete_pairs)
+    rows = inspector.inventory()["rows"]
+    assert len(rows) == 4
+    selected = selections(inspector)
+    result = await inspector.apply("admin", selected)
+    assert result["forgotten"] == 2
+    assert len(inspector.inventory()["rows"]) == 2

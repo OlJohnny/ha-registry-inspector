@@ -23,7 +23,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.json import json_bytes
 
 from .const import DOMAIN
-from .grouping import assign_groups
+from .grouping import assign_groups, device_pairs
 
 _LOGGER = logging.getLogger(__name__)
 DELETED = {"deleted_entities", "deleted_devices"}
@@ -183,7 +183,7 @@ class Inspector:
                         active_devices.update(
                             (field, tuple(pair))
                             for field in ("identifiers", "connections")
-                            for pair in record.get(field, [])
+                            for pair in device_pairs(record, field)
                         )
         resolved = []
         seen = set()
@@ -208,7 +208,7 @@ class Inspector:
                 same_identity |= any(
                     (field, tuple(pair)) in active_devices
                     for field in ("identifiers", "connections")
-                    for pair in record.get(field, [])
+                    for pair in device_pairs(record, field)
                 )
             if same_identity:
                 raise InspectorError("A selected identity is active again. Refresh the list.")

@@ -29,7 +29,11 @@ def websocket_list(hass, connection, msg):
         connection.send_error(msg["id"], "inspector_error", str(err))
     except Exception:
         _LOGGER.exception("Could not inspect registries")
-        connection.send_error(msg["id"], "inspector_error", "The registry format is unsupported.")
+        connection.send_error(
+            msg["id"],
+            "inspector_error",
+            "Could not load registry records. See the Home Assistant logs.",
+        )
 
 
 @websocket_api.websocket_command(
