@@ -1,0 +1,14 @@
+{
+  "title": "Registry Inspector",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Registry Inspector",
+        "description": "Add an administrator-only sidebar panel to inspect devices and entities and forget selected saved deleted records. Active entries are read-only."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Registry Inspector is already configured."
+    }
+  }
+}

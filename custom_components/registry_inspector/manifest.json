@@ -1,0 +1,13 @@
+{
+  "domain": "registry_inspector",
+  "name": "Registry Inspector",
+  "codeowners": ["@OlJohnny"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
+  "documentation": "https://github.com/OlJohnny/ha-registry-inspector",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/OlJohnny/ha-registry-inspector/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
