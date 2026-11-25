@@ -120,7 +120,8 @@ async def test_automatic_scroll_loading_preserves_selection_without_limit(page):
       await panel.refresh();
     }""")
     await expect(page.locator("tbody tr")).to_have_count(50)
-    assert await page.locator("details.group").count() == 0
+    assert await page.locator("details.group").count() == 1
+    await expect(page.locator(".group-title")).to_have_text("Other entities")
     assert await page.locator("table").count() == 1
     first_row = await page.locator("tbody tr").first.element_handle()
     await page.get_by_role("button", name="Select loaded deleted records").click()
@@ -145,6 +146,9 @@ async def test_automatic_scroll_loading_preserves_selection_without_limit(page):
 
 
 async def test_group_selection_and_search_keep_device_context(page):
+    # A lone device joins the existing unlinked entities instead of getting its own heading.
+    await expect(page.locator("details.group")).to_have_count(1)
+    await expect(page.locator(".group-title")).to_have_text("Other entities")
     await page.evaluate("""async () => {
       for (const row of window.testRows) {
         row.group_id = 'device:device';

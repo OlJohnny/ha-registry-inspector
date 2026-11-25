@@ -176,6 +176,17 @@ class RegistryInspectorPanel extends HTMLElement {
       });
       groups.get(id).rows.push(row);
     }
+    let other = groups.get("other");
+    for (const group of [...groups.values()]) {
+      if (group.id === "other" || group.rows.length !== 1) continue;
+      if (!other) {
+        other = { id: "other", name: "Other entities", rows: [] };
+        groups.set(other.id, other);
+      }
+      other.rows.push(...group.rows);
+      groups.delete(group.id);
+    }
+    other?.rows.sort((a, b) => a.name.localeCompare(b.name) || this.key(a).localeCompare(this.key(b)));
     this.groupCache = [...groups.values()].sort((a, b) => (a.id === "other") - (b.id === "other")
       || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
     return this.groupCache;

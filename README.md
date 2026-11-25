@@ -59,6 +59,7 @@ within an integration. Records without a known device can share a hardware-addre
 group; ambiguous or unidentified records appear under Other entities. Grouping never
 changes a saved record or the exact identities submitted for deletion. A group
 checkbox selects its filtered deleted records, including any not yet loaded on screen.
+Groups with only one matching record also appear under Other entities.
 Area names show an entry's explicitly saved area, not an inferred device area.
 
 ## What forgetting changes
