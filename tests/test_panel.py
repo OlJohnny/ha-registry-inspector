@@ -61,9 +61,18 @@ async def test_search_active_protection_and_xss(page):
     assert await page.get_by_role("button", name="Forget selected").is_disabled()
 
 
-async def test_direct_forget_only_selected_record_and_backup_download(page):
+async def test_confirmation_cancel_and_forget_only_selected_record(page):
     await page.get_by_role("checkbox", name="Select deleted", exact=True).check()
     await page.get_by_role("button", name="Forget selected").click()
+    dialog = page.get_by_role("dialog", name="Forget 1 selected record?")
+    await expect(dialog).to_be_visible()
+    assert not any(call["type"].endswith("/forget") for call in await page.evaluate("window.calls"))
+    await dialog.get_by_role("button", name="Cancel", exact=True).click()
+    await expect(dialog).not_to_be_visible()
+    assert await page.locator("tbody tr").count() == 4
+    assert not any(call["type"].endswith("/forget") for call in await page.evaluate("window.calls"))
+    await page.get_by_role("button", name="Forget selected").click()
+    await dialog.get_by_role("button", name="Forget", exact=True).click()
     await page.locator("#success").wait_for(state="visible")
     calls = await page.evaluate("window.calls")
     forget = next(call for call in calls if call["type"].endswith("/forget"))
@@ -139,6 +148,9 @@ async def test_automatic_scroll_loading_preserves_selection_without_limit(page):
     await expect(page.locator("#selection-count")).to_have_text("125 selected")
     await expect(page.locator("tbody tr")).to_have_count(1)
     await page.get_by_role("button", name="Forget selected").click()
+    dialog = page.get_by_role("dialog", name="Forget 125 selected records?")
+    await expect(dialog).to_be_visible()
+    await dialog.get_by_role("button", name="Forget", exact=True).click()
     await page.locator("#success").wait_for(state="visible")
     calls = await page.evaluate("window.calls")
     request = next(call for call in calls if call["type"].endswith("/forget"))

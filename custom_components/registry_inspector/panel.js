@@ -82,6 +82,7 @@ class RegistryInspectorPanel extends HTMLElement {
         dialog::backdrop { background:#0008; } dialog h2 { margin:0 0 12px; font-size:20px; }
         pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border-radius:6px;
           background:var(--secondary-background-color,#eee); font-size:12px; }
+        .dialog-actions { display:flex; justify-content:flex-end; gap:10px; }
         @media(max-width:600px) { main { padding:16px; } header { padding:10px 16px; }
           th,td { padding:8px; } header h1 { font-size:18px; } }
       </style>
@@ -115,7 +116,13 @@ class RegistryInspectorPanel extends HTMLElement {
         <div id="load-status" class="muted" role="status"></div>
       </main>
       <dialog id="details"><h2>Saved registry record</h2><pre id="record"></pre>
-        <button id="close-details">Close</button></dialog>`;
+        <button id="close-details">Close</button></dialog>
+      <dialog id="forget-confirmation" aria-labelledby="forget-title"><form method="dialog">
+        <h2 id="forget-title"></h2>
+        <p>Their saved settings will be removed. A backup will be saved first.</p>
+        <div class="dialog-actions"><button value="cancel" autofocus>Cancel</button>
+          <button value="forget" class="danger">Forget</button></div>
+      </form></dialog>`;
     this.$("menu").onclick = () => this.dispatchEvent(new Event("hass-toggle-menu", {
       bubbles: true, composed: true,
     }));
@@ -135,7 +142,14 @@ class RegistryInspectorPanel extends HTMLElement {
       this.updateSelection();
     };
     this.$("close-details").onclick = () => this.$("details").close();
-    this.$("forget").onclick = () => this.forget();
+    this.$("forget").onclick = () => this.confirmForget();
+    this.$("forget-confirmation").addEventListener("close", () => {
+      const selections = this.pendingSelections;
+      this.pendingSelections = null;
+      if (this.$("forget-confirmation").returnValue === "forget" && selections) {
+        this.forget(selections);
+      }
+    });
     this.$("download").onclick = () => {
       const url = URL.createObjectURL(new Blob([this.lastBackup.backup_content], {
         type: "application/json",
@@ -410,16 +424,24 @@ class RegistryInspectorPanel extends HTMLElement {
     this.$("selection-count").textContent = `${this.selected.size} selected`;
   }
 
-  async forget() {
+  confirmForget() {
     if (this.busy || this.writeDisabledReason || !this.selected.size) return;
+    this.pendingSelections = this.rows.filter((row) => this.selected.has(this.key(row)))
+      .map(({ kind, id, fingerprint }) => ({ kind, id, fingerprint }));
+    const count = this.pendingSelections.length;
+    this.$("forget-title").textContent = `Forget ${count} selected record${count === 1 ? "" : "s"}?`;
+    this.$("forget-confirmation").returnValue = "";
+    this.$("forget-confirmation").showModal();
+  }
+
+  async forget(selections) {
+    if (this.busy || this.writeDisabledReason || !selections?.length) return;
     this.busy = true;
     this.$("forget").disabled = true;
     this.$("success").hidden = true;
     this.error("");
     this.render();
     try {
-      const selections = this.rows.filter((row) => this.selected.has(this.key(row)))
-        .map(({ kind, id, fingerprint }) => ({ kind, id, fingerprint }));
       const result = await this.call("forget", { selections });
       this.lastBackup = result;
       this.$("success-text").textContent = `Forgot ${result.forgotten} records. `;

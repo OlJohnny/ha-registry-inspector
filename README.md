@@ -43,7 +43,7 @@ Samba or a file editor app without typing source code into the VM console.
 2. Review the **Saved deleted** entries. Use **View** to see the exact saved record.
 3. Select individual deleted records, or use a device group's checkbox to select
    its deleted records. Active records remain read-only.
-4. Choose **Forget selected**. A backup is written first and offered for download.
+4. Choose **Forget selected** and confirm. A backup is written first and offered for download.
    Pair the device again when ready.
 
 More entries appear automatically as you scroll. Selections persist across filters
