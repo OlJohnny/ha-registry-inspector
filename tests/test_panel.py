@@ -114,11 +114,14 @@ async def test_automatic_scroll_loading_preserves_selection_without_limit(page):
       const template = window.testRows.find(row => row.id === 'deleted');
       window.testRows = Array.from({length:125}, (_, n) => ({
         ...template, id:String(n), name:`Plug ${String(n).padStart(3, '0')}`,
-        entity_id:`switch.plug_${n}`, fingerprint:`fp-${n}`
+        kind:'device', entity_id:null, fingerprint:`fp-${n}`,
+        group_id:`device:${n}`, group_name:`Plug ${String(n).padStart(3, '0')}`
       }));
       await panel.refresh();
     }""")
     await expect(page.locator("tbody tr")).to_have_count(50)
+    assert await page.locator("details.group").count() == 0
+    assert await page.locator("table").count() == 1
     first_row = await page.locator("tbody tr").first.element_handle()
     await page.get_by_role("button", name="Select loaded deleted records").click()
     await page.locator("registry-inspector-panel").evaluate("p => p.scrollTop = p.scrollHeight")
@@ -127,6 +130,7 @@ async def test_automatic_scroll_loading_preserves_selection_without_limit(page):
     await expect(page.locator("#selection-count")).to_have_text("50 selected")
     await page.locator("registry-inspector-panel").evaluate("p => p.scrollTop = p.scrollHeight")
     await expect(page.locator("tbody tr")).to_have_count(125)
+    assert await page.locator("table").count() == 1
     # The sticky toolbar remains usable without scrolling back to the top.
     await page.get_by_role("button", name="Select loaded deleted records").click()
     await expect(page.locator("#selection-count")).to_have_text("125 selected")
@@ -158,5 +162,11 @@ async def test_group_selection_and_search_keep_device_context(page):
     assert await group.evaluate("input => input.indeterminate")
     await page.get_by_role("searchbox").fill("Kitchen plug")
     await expect(page.locator("tbody tr")).to_have_count(4)
+    await page.get_by_role("searchbox").fill("0x1234_deleted")
+    await expect(page.locator("tbody tr")).to_have_count(1)
+    assert await page.locator("details.group").count() == 0
+    assert await page.locator(".group-select").count() == 0
+    await page.get_by_role("searchbox").fill("Kitchen plug")
+    await expect(page.locator("details.group")).to_have_count(1)
     await page.locator("details.group > summary").click(position={"x": 180, "y": 20})
     await expect(page.locator("details.group")).not_to_have_attribute("open", "")

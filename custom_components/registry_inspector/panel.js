@@ -53,8 +53,9 @@ class RegistryInspectorPanel extends HTMLElement {
           position:sticky; top:0; z-index:1; padding:10px 0;
           background:var(--primary-background-color,#fafafa); }
         .actions span { flex:1; }
-        .group { margin-bottom:14px; border:1px solid var(--divider-color,#ddd);
+        .group,.single-records { margin-bottom:14px; border:1px solid var(--divider-color,#ddd);
           border-radius:8px; background:var(--card-background-color,white); overflow:hidden; }
+        .single-records > .table-wrap { border-top:0; }
         .group > summary { display:flex; gap:12px; align-items:center; padding:12px;
           cursor:pointer; list-style:none; }
         .group > summary::before { content:"▸"; width:12px; }
@@ -67,7 +68,7 @@ class RegistryInspectorPanel extends HTMLElement {
         table { border-collapse:collapse; width:100%; text-align:left; }
         th,td { padding:10px 12px; border-bottom:1px solid var(--divider-color,#ddd); }
         th { white-space:nowrap; color:var(--secondary-text-color,#666); font-size:12px; }
-        tbody tr:last-child td { border-bottom:0; } .identity { max-width:420px; }
+        tbody:last-child tr:last-child td { border-bottom:0; } .identity { max-width:420px; }
         .identity small { display:block; overflow-wrap:anywhere; }
         .badge { display:inline-block; border-radius:4px; padding:2px 6px;
           background:var(--secondary-background-color,#eee); white-space:nowrap; }
@@ -244,16 +245,32 @@ class RegistryInspectorPanel extends HTMLElement {
 
   renderGroups(append = false) {
     if (!append) this.$("groups").replaceChildren();
-    const existing = new Map([...this.$("groups").children].map((node) => [node.dataset.group, node]));
+    const existing = new Map([...this.$("groups").querySelectorAll("tbody[data-group]")]
+      .map((body) => [body.dataset.group, body]));
     const groups = this.filteredGroups();
     let remaining = this.visibleLimit;
     for (const group of groups) {
       if (remaining <= 0) break;
       const records = group.rows.slice(0, remaining);
       remaining -= records.length;
-      let node = existing.get(group.id);
-      if (!node) {
-        node = document.createElement("details");
+      let body = existing.get(group.id);
+      if (!body && group.rows.length === 1) {
+        let block = this.$("groups").lastElementChild;
+        if (!block?.classList.contains("single-records")) {
+          block = document.createElement("div");
+          block.className = "single-records";
+          block.append(this.createTable());
+          this.$("groups").append(block);
+        }
+        const table = block.querySelector("table");
+        body = table.lastElementChild;
+        if (body.dataset.group) {
+          body = document.createElement("tbody");
+          table.append(body);
+        }
+        body.dataset.group = group.id;
+      } else if (!body) {
+        const node = document.createElement("details");
         node.className = "group";
         node.dataset.group = group.id;
         node.open = !this.collapsedGroups.has(group.id);
@@ -278,11 +295,9 @@ class RegistryInspectorPanel extends HTMLElement {
         count.className = "group-count";
         count.textContent = `${group.rows.length} records · ${select.members.length} deleted`;
         summary.append(select, name, count);
-        const table = document.createElement("div");
-        table.className = "table-wrap";
-        table.innerHTML = `<table><thead><tr><th>Select</th><th>Name / ID</th><th>Type</th>
-          <th>Registry</th><th>Live status</th><th>Integration</th><th>Area</th><th>Details</th>
-          </tr></thead><tbody></tbody></table>`;
+        const table = this.createTable();
+        body = table.querySelector("tbody");
+        body.dataset.group = group.id;
         node.append(summary, table);
         node.addEventListener("toggle", () => {
           if (node.open) this.collapsedGroups.delete(group.id);
@@ -291,7 +306,6 @@ class RegistryInspectorPanel extends HTMLElement {
         });
         this.$("groups").append(node);
       }
-      const body = node.querySelector("tbody");
       body.append(...records.slice(body.children.length).map((row) => this.renderRow(row)));
     }
     const total = groups.reduce((count, group) => count + group.rows.length, 0);
@@ -300,6 +314,15 @@ class RegistryInspectorPanel extends HTMLElement {
       : `${Math.min(this.visibleLimit, total)} of ${total} records`;
     this.updateSelection();
     this.scheduleLoad();
+  }
+
+  createTable() {
+    const table = document.createElement("div");
+    table.className = "table-wrap";
+    table.innerHTML = `<table><thead><tr><th>Select</th><th>Name / ID</th><th>Type</th>
+      <th>Registry</th><th>Live status</th><th>Integration</th><th>Area</th><th>Details</th>
+      </tr></thead><tbody></tbody></table>`;
+    return table;
   }
 
   renderRow(row) {
